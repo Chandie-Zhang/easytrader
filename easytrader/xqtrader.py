@@ -97,9 +97,6 @@ class XueQiuTrader(webtrader.WebTrader):
         """
         return virtual * self.multiple
 
-    def _get_html(self, url):
-        return self.s.get(url).text
-
     def _search_stock_info(self, code):
         """
         通过雪球的接口获取股票详细信息

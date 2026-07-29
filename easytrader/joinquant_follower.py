@@ -79,15 +79,7 @@ class JoinQuantFollower(BaseFollower):
         for worker in workers:
             worker.join()
 
-    # @staticmethod
-    # def extract_strategy_id(strategy_url):
-    #     return re.search(r"(?<=backtestId=)\w+", strategy_url).group()
-    #
-    # def extract_strategy_name(self, strategy_url):
-    #     rep = self.s.get(strategy_url)
-    #     return self.re_find(
-    #         r'(?<=title="点击修改策略名称"\>).*(?=\</span)', rep.content.decode("utf8")
-    #     )
+
     def extract_strategy_id(self, strategy_url):
         rep = self.s.get(strategy_url)
         return self.re_search(r'name="backtest\[backtestId\]"\s+?value="(.*?)">', rep.content.decode("utf8"))

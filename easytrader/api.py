@@ -2,8 +2,6 @@
 import logging
 import sys
 
-import six
-
 from easytrader.joinquant_follower import JoinQuantFollower
 from easytrader.log import logger
 from easytrader.ricequant_follower import RiceQuantFollower
