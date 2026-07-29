@@ -2,6 +2,7 @@
 import urllib3
 
 from easytrader import exceptions
+from easytrader.accounts import AccountManager
 from easytrader.api import use, follower
 from easytrader.log import logger
 

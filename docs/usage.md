@@ -291,6 +291,98 @@ user.adjust_weight('股票代码', 目标比例)
 user.exit()
 ```
 
+## 多账号管理（通用同花顺客户端）
+
+在一个已登录多个券商账号的同花顺客户端中，通过 `AccountManager` 统一管理和切换。
+
+### 初始化
+
+```python
+import easytrader
+
+trader = easytrader.use('universal_client')
+trader.connect(exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe')
+
+# 自动扫描已登录的账号
+am = easytrader.AccountManager(trader)
+```
+
+初始化时自动扫描当前已登录的券商账号，不需手动调用 `scan()`。
+
+### 查看账号
+
+```python
+am.list()
+# [1] 湘财证券 (ALT+1) ← 当前
+# [2] 模拟炒股 (ALT+2)
+
+am.current   # 从界面实时读取当前账号名称
+am.active    # AccountManager 记录的当前账号
+```
+
+### 切换账号
+
+```python
+am.switch('湘财证券')          # 按名称切换
+am.switch(0)                   # 按索引切换
+am['模拟炒股'].balance         # 切换并查询一行搞定
+```
+
+切换通过发送 `ALT+数字` 快捷键实现。
+
+### 链式调用
+
+```python
+am.switch('湘财证券').balance       # 切到湘财查余额
+am.switch('模拟炒股').position      # 切到模拟盘查持仓
+```
+
+### 重命名
+
+```python
+am.rename(0, '主力账户')
+```
+
+`name` 是自定义别名，`label` 保留界面扫描到的原始名称。`switch()` 同时匹配 `name` 和 `label`。
+
+### 遍历所有账号
+
+```python
+for acc in am.accounts:
+    bal = am[acc['name']].balance
+    print(f"{acc['name']}: {bal['总资产']}")
+```
+
+### 完整示例
+
+```python
+import easytrader
+
+trader = easytrader.use('universal_client')
+trader.connect(exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe')
+# 某些客户端需要开启 type_keys 输入
+trader.enable_type_keys_for_editor()
+
+am = easytrader.AccountManager(trader)  # 自动扫描账号
+
+# 重命名
+am.rename(0, '湘财')
+am.rename(1, '模拟盘')
+
+# 切换 + 操作
+am.switch('湘财')
+print('余额:', am.balance)
+print('持仓:', am.position)
+
+# 临时查另一个账号
+am['模拟盘'].buy('162411', 0.55, 100)
+
+# 遍历所有账号
+for acc in am.accounts:
+    total = am[acc['name']].balance.get('总资产', 0)
+    print(f"{acc['name']}: {total}")
+```
+
 ## 常见问题
 
 ### 验证码识别

@@ -191,3 +191,6 @@ class UNIVERSAL(CommonConfig):
     }
 
     AUTO_IPO_NUMBER = '可申购数量'
+
+    # 账号管理下拉框（用于多账号扫描，含"编辑账户"选项）
+    ACCOUNT_SWITCHER_COMBOBOX_ID = 2322
