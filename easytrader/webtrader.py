@@ -91,18 +91,14 @@ class WebTrader(metaclass=abc.ABCMeta):
                 time.sleep(1)
 
     def check_login(self, sleepy=30):
-        logger.setLevel(logging.ERROR)
         try:
             response = self.heartbeat()
             self.check_account_live(response)
         except requests.exceptions.ConnectionError:
             pass
         except requests.exceptions.RequestException as e:
-            logger.setLevel(self.log_level)
             logger.error("心跳线程发现账户出现错误: %s %s, 尝试重新登陆", e.__class__, e)
             self.autologin()
-        finally:
-            logger.setLevel(self.log_level)
         time.sleep(sleepy)
 
     def heartbeat(self):
