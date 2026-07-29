@@ -8,7 +8,7 @@ from . import clienttrader
 
 
 class UniversalClientTrader(clienttrader.BaseLoginClientTrader):
-    grid_strategy = grid_strategies.Xls
+    grid_strategy = grid_strategies.Copy
 
     @property
     def broker_type(self):
@@ -36,7 +36,9 @@ class UniversalClientTrader(clienttrader.BaseLoginClientTrader):
             # wait login window ready
             while True:
                 try:
-                    login_window = pywinauto.findwindows.find_window(class_name='#32770', found_index=1)
+                    login_window = pywinauto.findwindows.find_window(
+                        class_name="#32770", found_index=1
+                    )
                     break
                 except:
                     self.wait(1)
@@ -57,4 +59,3 @@ class UniversalClientTrader(clienttrader.BaseLoginClientTrader):
 
         self._close_prompt_windows()
         self._main = self._app.window(title="网上股票交易系统5.0")
-
