@@ -25,6 +25,7 @@ if not sys.platform.startswith("darwin"):
     import pywinauto
     import pywinauto.clipboard
 
+
 class IClientTrader(abc.ABC):
     @property
     @abc.abstractmethod
@@ -144,19 +145,19 @@ class ClientTrader(IClientTrader):
     @property
     def position(self):
         self._switch_left_menus(["查询[F4]", "资金股票"])
-
+        self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @property
     def today_entrusts(self):
         self._switch_left_menus(["查询[F4]", "当日委托"])
-
+        self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @property
     def today_trades(self):
         self._switch_left_menus(["查询[F4]", "当日成交"])
-
+        self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @property
@@ -181,7 +182,9 @@ class ClientTrader(IClientTrader):
 
         # 点击全部撤销控件
         self._app.top_window().child_window(
-            control_id=self._config.TRADE_CANCEL_ALL_ENTRUST_CONTROL_ID, class_name="Button", title_re="""全撤.*"""
+            control_id=self._config.TRADE_CANCEL_ALL_ENTRUST_CONTROL_ID,
+            class_name="Button",
+            title_re="""全撤.*""",
         ).click()
         self.wait(0.2)
 
@@ -302,23 +305,6 @@ class ClientTrader(IClientTrader):
                 return
         raise TypeError("不支持对应的市价类型: {}".format(ttype))
 
-    def _set_stock_exchange_type(self, ttype):
-        """根据选择的市价交易类型选择对应的下拉选项"""
-        selects = self._main.child_window(
-            control_id=self._config.TRADE_STOCK_EXCHANGE_CONTROL_ID, class_name="ComboBox"
-        )
-
-        for i, text in enumerate(selects.texts()):
-            # skip 0 index, because 0 index is current select index
-            if i == 0:
-                if ttype.strip() == text.strip():  # 当前已经选中
-                    return
-                else:
-                    continue
-            if ttype.strip() == text.strip():
-                selects.select(i - 1)
-                return
-        raise TypeError("不支持对应的市场类型: {}".format(ttype))
 
     def auto_ipo(self):
         self._switch_left_menus(self._config.AUTO_IPO_MENU_PATH)
@@ -381,9 +367,9 @@ class ClientTrader(IClientTrader):
                     w.close()
                     self.wait(0.2)
         except (
-                findwindows.ElementNotFoundError,
-                timings.TimeoutError,
-                RuntimeError,
+            findwindows.ElementNotFoundError,
+            timings.TimeoutError,
+            RuntimeError,
         ) as ex:
             pass
 
@@ -430,7 +416,7 @@ class ClientTrader(IClientTrader):
         time.sleep(0.2)
         self._main.child_window(
             control_id=self._config.TRADE_SUBMIT_CONTROL_ID, class_name="Button"
-        ).click()
+        ).type_keys("{ENTER}")
 
     @perf_clock
     def __get_top_window_pop_dialog(self):
@@ -447,6 +433,7 @@ class ClientTrader(IClientTrader):
         )
 
     def _set_trade_params(self, security, price, amount):
+        self.wait(0.3)
         code = security[-6:]
 
         self._type_edit_control_keys(self._config.TRADE_SECURITY_CONTROL_ID, code)
@@ -454,13 +441,6 @@ class ClientTrader(IClientTrader):
         # wait security input finish
         self.wait(0.1)
 
-        # 设置交易所
-        # if security.lower().startswith("sz"):
-        #     self._set_stock_exchange_type("深圳Ａ股")
-        # if security.lower().startswith("sh"):
-        #     self._set_stock_exchange_type("上海Ａ股")
-        #
-        # self.wait(0.1)
 
         self._type_edit_control_keys(
             self._config.TRADE_PRICE_CONTROL_ID,
@@ -489,10 +469,6 @@ class ClientTrader(IClientTrader):
     def _get_grid_data(self, control_id):
         return self.grid_strategy_instance.get(control_id)
 
-    def _type_keys(self, control_id, text):
-        self._main.child_window(control_id=control_id, class_name="Edit").set_edit_text(
-            text
-        )
 
     def _type_edit_control_keys(self, control_id, text):
         if not self._editor_need_type_keys:
@@ -511,16 +487,12 @@ class ClientTrader(IClientTrader):
             editor.select()
             editor.type_keys(text)
 
-    def _collapse_left_menus(self):
-        items = self._get_left_menus_handle().roots()
-        for item in items:
-            item.collapse()
 
     @perf_clock
     def _switch_left_menus(self, path, sleep=0.2):
         self.close_pop_dialog()
         self._get_left_menus_handle().get_item(path).select()
-        self._app.top_window().type_keys('{F5}')
+        self._app.top_window().type_keys("{F5}")
         self.wait(sleep)
 
     def _switch_left_menus_by_shortcut(self, shortcut, sleep=0.5):
@@ -564,16 +536,23 @@ class ClientTrader(IClientTrader):
     @perf_clock
     def _handle_pop_dialogs(self, handler_class=pop_dialog_handler.PopDialogHandler):
         handler = handler_class(self._app)
+        loop_count = 0
 
         while self.is_exist_pop_dialog():
+            loop_count += 1
+            logger.info("第 %s 次循环, 检测到弹窗", loop_count)
             try:
                 title = self._get_pop_dialog_title()
-            except pywinauto.findwindows.ElementNotFoundError:
+                logger.info("弹窗标题: '%s'", title)
+            except pywinauto.findwindows.ElementNotFoundError as e:
+                logger.warning("弹窗存在但无法获取标题, 异常: %s", e)
                 return {"message": "success"}
 
             result = handler.handle(title)
+            logger.info("handle('%s') 返回: %s", title, result)
             if result:
                 return result
+        logger.info("弹窗已消失, 共循环 %s 次, 正常退出", loop_count)
         return {"message": "success"}
 
 
