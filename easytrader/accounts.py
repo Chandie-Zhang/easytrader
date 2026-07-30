@@ -130,6 +130,9 @@ class AccountManager:
                 control_id=self._trader._config.ACCOUNT_SWITCHER_COMBOBOX_ID,
                 class_name="ComboBox"
             )
+            # 快速检测控件是否存在，避免单账号时等待默认超时（~5s）
+            if not combo.exists(timeout=0.5):
+                return None
             return self._find_account_combobox_items(combo)
         except Exception:
             return None
