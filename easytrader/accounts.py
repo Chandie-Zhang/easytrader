@@ -37,22 +37,29 @@ class AccountManager:
                 {"name": "当前账号", "hotkey": 1, "label": "", "_synthetic": True}
             ]
             self._active_index = 0
-            logger.info("单账号模式: 操作将直接作用于当前已登录的账号")
+            logger.info("单账号模式")
+
+    @property
+    def _is_single(self) -> bool:
+        return bool(self._accounts and self._accounts[0].get("_synthetic"))
+
     # ── 账号管理 ──────────────────────────────────────────────
 
     @property
     def accounts(self) -> List[Dict]:
-        return list(self._accounts)
+        return list(self._accounts) if not self._is_single else []
 
     @property
     def active(self) -> Optional[str]:
-        if self._active_index is None:
-            return None
-        return self._accounts[self._active_index]["name"]
+        return None if self._is_single else (
+            self._accounts[self._active_index]["name"]
+            if self._active_index is not None else None
+        )
 
     @property
     def current(self) -> Optional[str]:
-        """从同花顺界面实时读取当前选中的账号名称"""
+        if self._is_single:
+            return None
         main = self._trader._main
         if main is None:
             return None
@@ -72,12 +79,11 @@ class AccountManager:
             return None
 
     def list(self) -> List[Dict]:
+        if self._is_single:
+            logger.info("单账号模式，无需切换")
+            return []
         if not self._accounts:
             return []
-        single = len(self._accounts) == 1 and self._accounts[0].get("_synthetic")
-        if single:
-            logger.info("单账号模式: 当前已登录 1 个账号，无需切换")
-            return self._accounts
         logger.info("已注册 %d 个账号:", len(self._accounts))
         for i, acc in enumerate(self._accounts):
             marker = " ← 当前" if i == self._active_index else ""
@@ -140,6 +146,9 @@ class AccountManager:
     # ── 重命名 ──────────────────────────────────────────────
 
     def rename(self, index: int, new_name: str) -> "AccountManager":
+        if self._is_single:
+            logger.info("单账号模式，无需重命名")
+            return self
         if index < 0 or index >= len(self._accounts):
             raise IndexError(
                 f"账号索引 {index} 超出范围 (共 {len(self._accounts)} 个账号)"
@@ -151,6 +160,8 @@ class AccountManager:
     # ── 账号切换 ──────────────────────────────────────────────
 
     def switch(self, name_or_index: Union[str, int]) -> "AccountManager":
+        if self._is_single:
+            return self
         idx = self._resolve(name_or_index)
         if idx is None:
             available = ", ".join(
@@ -203,8 +214,4 @@ class AccountManager:
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
-        if not self._accounts:
-            return getattr(self._trader, name)
-        if self._active_index is None and self._accounts:
-            self.switch(0)
         return getattr(self._trader, name)
