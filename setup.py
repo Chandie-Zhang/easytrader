@@ -18,6 +18,7 @@ setup(
         "easyutils",
         "flask",
         "pywinauto==0.6.6",
+        "pywin32",  # pywinauto 底层依赖，操作 Windows COM/GUI 控件
         "pillow",
         "pandas",
     ],
