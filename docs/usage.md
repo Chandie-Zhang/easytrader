@@ -303,7 +303,7 @@ import easytrader
 trader = easytrader.use('universal_client')
 trader.connect(exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe')
 
-# 自动扫描已登录的账号
+# 自动扫描已登录的账号（单账号时自动降级为直通模式）
 am = easytrader.AccountManager(trader)
 ```
 

@@ -9,6 +9,8 @@ class AccountManager:
     """
     多账号管理器 —— 管理同一个同花顺客户端内的多个已登录券商账号。
     
+    单账号时自动降级为直通模式，所有操作直接作用于当前账号。
+    
     用法::
     
         >>> import easytrader
@@ -29,7 +31,13 @@ class AccountManager:
                 self.scan()
             except Exception as e:
                 logger.debug("自动扫描账号失败: %s", e)
-
+        # 单账号兼容：扫描不到时创建默认账号，所有操作直通 trader
+        if not self._accounts:
+            self._accounts = [
+                {"name": "当前账号", "hotkey": 1, "label": "", "_synthetic": True}
+            ]
+            self._active_index = 0
+            logger.info("单账号模式: 操作将直接作用于当前已登录的账号")
     # ── 账号管理 ──────────────────────────────────────────────
 
     @property
@@ -65,8 +73,11 @@ class AccountManager:
 
     def list(self) -> List[Dict]:
         if not self._accounts:
-            logger.info("未扫描到已登录账号，请确认客户端已登录")
             return []
+        single = len(self._accounts) == 1 and self._accounts[0].get("_synthetic")
+        if single:
+            logger.info("单账号模式: 当前已登录 1 个账号，无需切换")
+            return self._accounts
         logger.info("已注册 %d 个账号:", len(self._accounts))
         for i, acc in enumerate(self._accounts):
             marker = " ← 当前" if i == self._active_index else ""
@@ -82,7 +93,6 @@ class AccountManager:
 
         raw = self._scan_account_manager_combobox(main)
         if not raw:
-            logger.warning("未能自动扫描到账号列表")
             return []
 
         self._accounts = [
@@ -149,8 +159,9 @@ class AccountManager:
         if idx == self._active_index:
             return self
         acc = self._accounts[idx]
-        logger.info("切换到账号: %s (ALT+%d)", acc["name"], acc["hotkey"])
-        self._send_hotkey(acc["hotkey"])
+        logger.info("切换到账号: %s", acc["name"])
+        if not acc.get("_synthetic"):
+            self._send_hotkey(acc["hotkey"])
         self._active_index = idx
         return self
 
