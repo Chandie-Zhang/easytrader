@@ -5,7 +5,6 @@ import inspect
 import time
 from typing import Dict, List, Optional, Union
 
-from easytrader.client_lock import MUTATING_OPERATIONS
 from easytrader.log import logger
 
 
@@ -24,10 +23,7 @@ class _AccountProxy:
             @functools.wraps(descriptor)
             def call(*args, **kwargs):
                 operation_name = "{}:{}".format(self._name_or_index, name)
-                with self._manager._client_operation(
-                    operation_name,
-                    preserve_state_on_error=name in MUTATING_OPERATIONS,
-                ):
+                with self._manager._client_operation(operation_name):
                     self._manager._switch_locked(self._name_or_index)
                     return getattr(trader, name)(*args, **kwargs)
 
@@ -298,13 +294,10 @@ class AccountManager:
         return getattr(self._trader, name)
 
     @contextlib.contextmanager
-    def _client_operation(self, operation_name, preserve_state_on_error=False):
+    def _client_operation(self, operation_name):
         client_lock = getattr(self._trader, "_client_lock", None)
         if client_lock is None:
             yield
             return
-        with client_lock.operation(
-            operation_name,
-            preserve_state_on_error=preserve_state_on_error,
-        ):
+        with client_lock.operation(operation_name):
             yield

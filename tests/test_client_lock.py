@@ -44,8 +44,8 @@ class MutexFactory:
         return mutex
 
 
-def process_lock_worker(client_path, state_dir, events, worker_name, hold_seconds):
-    lock = ClientOperationLock(timeout_seconds=5, state_dir=state_dir)
+def process_lock_worker(client_path, events, worker_name, hold_seconds):
+    lock = ClientOperationLock(timeout_seconds=5)
     lock.configure(client_path)
     with lock.operation("worker"):
         events.put(("{}-enter".format(worker_name), time.time()))
@@ -53,8 +53,8 @@ def process_lock_worker(client_path, state_dir, events, worker_name, hold_second
         events.put(("{}-exit".format(worker_name), time.time()))
 
 
-def crashing_process_worker(client_path, state_dir, entered):
-    lock = ClientOperationLock(timeout_seconds=5, state_dir=state_dir)
+def crashing_process_worker(client_path, entered):
+    lock = ClientOperationLock(timeout_seconds=5)
     lock.configure(client_path)
     with lock.operation("crash"):
         entered.set()
@@ -73,7 +73,6 @@ class TestClientOperationLock(unittest.TestCase):
     def make_lock(self, timeout_seconds=1):
         lock = ClientOperationLock(
             timeout_seconds=timeout_seconds,
-            state_dir=self.temp_dir.name,
             mutex_factory=self.factory,
         )
         lock.configure(self.client_path)
@@ -84,15 +83,6 @@ class TestClientOperationLock(unittest.TestCase):
         second = self.make_lock()
 
         self.assertEqual(first.mutex_name, second.mutex_name)
-        self.assertEqual(first.state_path, second.state_path)
-
-    def test_operation_creates_and_removes_state_marker(self):
-        lock = self.make_lock()
-
-        with lock.operation("buy"):
-            self.assertTrue(os.path.exists(lock.state_path))
-
-        self.assertFalse(os.path.exists(lock.state_path))
 
     def test_operation_releases_mutex_after_exception(self):
         lock = self.make_lock()
@@ -104,20 +94,8 @@ class TestClientOperationLock(unittest.TestCase):
 
         self.assertEqual(mutex.acquire_count, 1)
         self.assertEqual(mutex.release_count, 1)
-        self.assertFalse(os.path.exists(lock.state_path))
 
-    def test_mutating_operation_keeps_state_after_exception(self):
-        lock = self.make_lock()
-        mutex = self.factory.instances[-1]
-
-        with self.assertRaises(ValueError):
-            with lock.operation("buy", preserve_state_on_error=True):
-                raise ValueError("result unknown")
-
-        self.assertEqual(mutex.release_count, 1)
-        self.assertTrue(os.path.exists(lock.state_path))
-
-    def test_keyboard_interrupt_keeps_state_and_releases_mutex(self):
+    def test_keyboard_interrupt_releases_mutex(self):
         lock = self.make_lock()
         mutex = self.factory.instances[-1]
 
@@ -126,19 +104,6 @@ class TestClientOperationLock(unittest.TestCase):
                 raise KeyboardInterrupt()
 
         self.assertEqual(mutex.release_count, 1)
-        self.assertTrue(os.path.exists(lock.state_path))
-
-    def test_caught_nested_trade_error_still_keeps_state(self):
-        lock = self.make_lock()
-
-        with lock.operation("account_proxy"):
-            try:
-                with lock.operation("buy", preserve_state_on_error=True):
-                    raise ValueError("result unknown")
-            except ValueError:
-                pass
-
-        self.assertTrue(os.path.exists(lock.state_path))
 
     def test_nested_operation_only_acquires_mutex_once(self):
         lock = self.make_lock()
@@ -151,24 +116,17 @@ class TestClientOperationLock(unittest.TestCase):
         self.assertEqual(mutex.acquire_count, 1)
         self.assertEqual(mutex.release_count, 1)
 
-    def test_abandoned_mutex_requires_explicit_recovery(self):
+    def test_abandoned_mutex_is_acquired_automatically(self):
         lock = self.make_lock()
         mutex = self.factory.instances[-1]
         mutex.abandoned = True
+        entered = False
 
-        with self.assertRaises(exceptions.ClientStateUnknownError):
-            with lock.operation("buy"):
-                pass
-
-        self.assertTrue(os.path.exists(lock.state_path))
-        mutex.abandoned = False
-        with self.assertRaises(exceptions.ClientStateUnknownError):
-            with lock.operation("buy"):
-                pass
-
-        lock.clear_recovery_state()
         with lock.operation("buy"):
-            pass
+            entered = True
+
+        self.assertTrue(entered)
+        self.assertEqual(mutex.release_count, 1)
 
     def test_timeout_does_not_enter_operation(self):
         first = self.make_lock()
@@ -226,11 +184,11 @@ class TestWindowsProcessLock(unittest.TestCase):
             events = multiprocessing.Queue()
             first = multiprocessing.Process(
                 target=process_lock_worker,
-                args=(client_path, state_dir, events, "first", 0.3),
+                args=(client_path, events, "first", 0.3),
             )
             second = multiprocessing.Process(
                 target=process_lock_worker,
-                args=(client_path, state_dir, events, "second", 0),
+                args=(client_path, events, "second", 0),
             )
 
             first.start()
@@ -249,20 +207,21 @@ class TestWindowsProcessLock(unittest.TestCase):
                 by_name["first-exit"],
             )
 
-    def test_crashed_process_leaves_recovery_marker(self):
+    def test_lock_is_acquired_after_process_crash(self):
         with tempfile.TemporaryDirectory() as state_dir:
             client_path = os.path.join(state_dir, "xiadan.exe")
             entered = multiprocessing.Event()
-            lock = ClientOperationLock(timeout_seconds=3, state_dir=state_dir)
+            lock = ClientOperationLock(timeout_seconds=3)
             lock.configure(client_path)
             process = multiprocessing.Process(
                 target=crashing_process_worker,
-                args=(client_path, state_dir, entered),
+                args=(client_path, entered),
             )
             process.start()
             self.assertTrue(entered.wait(3))
             process.join(3)
 
-            with self.assertRaises(exceptions.ClientStateUnknownError):
-                with lock.operation("next"):
-                    pass
+            acquired = False
+            with lock.operation("next"):
+                acquired = True
+            self.assertTrue(acquired)

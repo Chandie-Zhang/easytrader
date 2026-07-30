@@ -14,7 +14,7 @@ class LocalClientLock:
         self._lock = threading.RLock()
 
     @contextlib.contextmanager
-    def operation(self, _operation_name, preserve_state_on_error=False):
+    def operation(self, _operation_name):
         with self._lock:
             yield
 
