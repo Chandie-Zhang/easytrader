@@ -1,9 +1,22 @@
 # coding: utf-8
 """测试 AccountManager 的核心逻辑（无需连接真实客户端）"""
+import contextlib
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock
 
 from easytrader.accounts import AccountManager
+
+
+class LocalClientLock:
+    def __init__(self):
+        self._lock = threading.RLock()
+
+    @contextlib.contextmanager
+    def operation(self, _operation_name, preserve_state_on_error=False):
+        with self._lock:
+            yield
 
 
 class MockTrader:
@@ -38,6 +51,16 @@ class TestAccountManagerCore(unittest.TestCase):
             {"name": "乙", "label": "乙", "hotkey": 2},
         ]
         self.am._active_index = 0
+        self.current_label = "甲"
+        combo = MagicMock()
+        combo.selected_text.side_effect = lambda: self.current_label
+        self.trader._main.child_window.return_value = combo
+
+        def switch_account(keys):
+            hotkey = int(keys.lstrip("%"))
+            self.current_label = self.am._accounts[hotkey - 1]["label"]
+
+        self.trader._main.type_keys.side_effect = switch_account
 
     def test_active_defaults_to_first(self):
         """默认活跃账号为第一个"""
@@ -70,26 +93,31 @@ class TestAccountManagerCore(unittest.TestCase):
             self.am.switch(99)
 
     def test_getitem_chain(self):
-        """__getitem__ 支持链式访问"""
-        result = self.am["乙"]
-        self.assertIs(result, self.am)
+        """__getitem__ 延迟到属性访问时原子切换"""
+        proxy = self.am["乙"]
+        self.assertEqual(self.am.active, "甲")
+        self.assertEqual(proxy.balance["资金余额"], 100000)
         self.assertEqual(self.am.active, "乙")
 
     def test_proxy_balance(self):
-        """__getattr__ 代理 balance 到当前账号"""
-        bal = self.am.balance
+        """账号代理读取 balance"""
+        bal = self.am["甲"].balance
         self.assertEqual(bal["资金余额"], 100000)
 
     def test_proxy_buy(self):
-        """__getattr__ 代理 buy() 到当前账号"""
-        result = self.am.buy("000001", 10.0, 100)
+        """账号代理调用 buy()"""
+        result = self.am["甲"].buy("000001", 10.0, 100)
         self.assertEqual(result["entrust_no"], "123456")
 
     def test_proxy_position(self):
-        """__getattr__ 代理 position 到当前账号"""
-        pos = self.am.position
+        """账号代理读取 position"""
+        pos = self.am["甲"].position
         self.assertEqual(len(pos), 1)
         self.assertEqual(pos[0]["证券代码"], "000001")
+
+    def test_multi_account_requires_explicit_account(self):
+        with self.assertRaises(RuntimeError):
+            self.am.buy("000001", 10.0, 100)
 
     def test_proxy_no_accounts(self):
         """未注册账号时，代理直接走 trader 原始行为"""
@@ -106,6 +134,16 @@ class TestAccountManagerCore(unittest.TestCase):
         """switch() 应调用 type_keys 发送 ALT+数字"""
         self.am.switch("乙")
         self.trader._main.type_keys.assert_called_once_with("%2")
+
+    def test_switch_uses_client_state_instead_of_stale_active_index(self):
+        """其他进程切换账号后不能相信本地 _active_index"""
+        self.current_label = "乙"
+        self.am._active_index = 0
+
+        self.am.switch("甲")
+
+        self.trader._main.type_keys.assert_called_once_with("%1")
+        self.assertEqual(self.current_label, "甲")
 
     def test_switch_only_sends_when_changed(self):
         """切换同名账号不应重复发送快捷键"""
@@ -128,6 +166,50 @@ class TestAccountManagerCore(unittest.TestCase):
         self.am._accounts.append({"name": "模拟", "label": "模拟炒股-UI**29", "hotkey": 3})
         self.am.switch("模拟炒股-UI**29")  # 按 label 匹配
         self.assertEqual(self.am.active, "模拟")
+
+    def test_scan_keeps_hotkey_order_when_second_account_is_selected(self):
+        trader = make_trader()
+        combo = MagicMock()
+        combo.exists.return_value = True
+        combo.item_texts.return_value = ["甲", "乙", "编辑账户"]
+        combo.selected_text.return_value = "乙"
+        trader._main.child_window.return_value = combo
+
+        manager = AccountManager(trader)
+
+        self.assertEqual(
+            [(account["label"], account["hotkey"]) for account in manager.accounts],
+            [("甲", 1), ("乙", 2)],
+        )
+        self.assertEqual(manager.active, "乙")
+
+    def test_account_proxy_serializes_switch_and_trade(self):
+        self.trader._client_lock = LocalClientLock()
+        entered_buy = threading.Event()
+        calls = []
+
+        def buy(_security, _price, _amount):
+            before = self.current_label
+            entered_buy.set()
+            time.sleep(0.05)
+            calls.append((before, self.current_label))
+            return {"entrust_no": "1"}
+
+        self.trader.buy = buy
+
+        first = threading.Thread(
+            target=lambda: self.am["甲"].buy("000001", 10, 100)
+        )
+        second = threading.Thread(
+            target=lambda: self.am["乙"].buy("000001", 10, 100)
+        )
+        first.start()
+        entered_buy.wait(2)
+        second.start()
+        first.join(2)
+        second.join(2)
+
+        self.assertEqual(calls, [("甲", "甲"), ("乙", "乙")])
 
 
 if __name__ == "__main__":

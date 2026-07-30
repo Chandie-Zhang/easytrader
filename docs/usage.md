@@ -325,17 +325,45 @@ am.active    # AccountManager 记录的当前账号
 ```python
 am.switch('湘财证券')          # 按名称切换
 am.switch(0)                   # 按索引切换
-am['模拟炒股'].balance         # 切换并查询一行搞定
+am['模拟炒股'].balance         # 原子地切换并查询
 ```
 
 切换通过发送 `ALT+数字` 快捷键实现。
 
-### 链式调用
+### 并发安全调用
 
 ```python
-am.switch('湘财证券').balance       # 切到湘财查余额
-am.switch('模拟炒股').position      # 切到模拟盘查持仓
+am['湘财证券'].balance                    # 切到湘财查余额
+am['模拟炒股'].position                   # 切到模拟盘查持仓
+am['模拟炒股'].buy('162411', 0.55, 100)   # 切换和下单不可被其他线程或进程打断
 ```
+
+同一个客户端的全部操作由 Windows 命名 Mutex 串行执行，同时覆盖多线程和多进程。
+`am['账号']` 会在获得锁后切换并验证真实账号，再执行完整的查询、下单和弹窗处理。
+
+并发场景不要将 `switch()` 和后续操作拆开：
+
+```python
+# 不安全：switch() 返回后其他线程或进程可能切换账号
+am.switch('湘财证券')
+am.buy('162411', 0.55, 100)
+```
+
+多账号模式会拒绝这种未显式指定账号的代理调用；单账号模式仍保持原有直通行为。
+
+等待客户端锁超过 30 秒会抛出 `ClientBusyError`，不会继续执行已经过期的操作。
+
+如果上一个进程在操作客户端时异常退出，或者交易/撤单操作抛出异常、被中断，
+后续调用会抛出 `ClientStateUnknownError`。请先人工核对当日委托和客户端界面，
+确认不会重复下单后再清除恢复标记：
+
+```python
+trader.clear_client_recovery_state(
+    exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe'
+)
+```
+
+该方法只清除 easytrader 的恢复标记，不会撤单、补单或修改客户端内容。
 
 ### 重命名
 
@@ -369,10 +397,9 @@ am = easytrader.AccountManager(trader)  # 自动扫描账号
 am.rename(0, '湘财')
 am.rename(1, '模拟盘')
 
-# 切换 + 操作
-am.switch('湘财')
-print('余额:', am.balance)
-print('持仓:', am.position)
+# 原子地切换 + 操作
+print('余额:', am['湘财'].balance)
+print('持仓:', am['湘财'].position)
 
 # 临时查另一个账号
 am['模拟盘'].buy('162411', 0.55, 100)

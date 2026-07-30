@@ -58,6 +58,7 @@ class HTClientTrader(clienttrader.BaseLoginClientTrader):
         self._close_prompt_windows ( )
 
     @property
+    @clienttrader.locked_client_operation
     def balance(self):
         self._switch_left_menus(self._config.BALANCE_MENU_PATH)
 

@@ -1,8 +1,42 @@
 # -*- coding: utf-8 -*-
+import contextlib
+import functools
+import inspect
 import time
 from typing import Dict, List, Optional, Union
 
+from easytrader.client_lock import MUTATING_OPERATIONS
 from easytrader.log import logger
+
+
+class _AccountProxy:
+    """延迟切换账号，确保切换与后续操作共同持有客户端锁。"""
+
+    def __init__(self, manager, name_or_index):
+        self._manager = manager
+        self._name_or_index = name_or_index
+
+    def __getattr__(self, name):
+        trader = self._manager._trader
+        descriptor = inspect.getattr_static(trader, name)
+
+        if callable(descriptor):
+            @functools.wraps(descriptor)
+            def call(*args, **kwargs):
+                operation_name = "{}:{}".format(self._name_or_index, name)
+                with self._manager._client_operation(
+                    operation_name,
+                    preserve_state_on_error=name in MUTATING_OPERATIONS,
+                ):
+                    self._manager._switch_locked(self._name_or_index)
+                    return getattr(trader, name)(*args, **kwargs)
+
+            return call
+
+        operation_name = "{}:{}".format(self._name_or_index, name)
+        with self._manager._client_operation(operation_name):
+            self._manager._switch_locked(self._name_or_index)
+            return getattr(trader, name)
 
 
 class AccountManager:
@@ -17,9 +51,8 @@ class AccountManager:
         >>> trader = easytrader.use('universal')
         >>> trader.connect(exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe')
         >>> am = easytrader.AccountManager(trader)
-        >>> am.switch('账号1')            # ALT+1 切换
-        >>> am.balance                    # 当前账号的资金
-        >>> am['账号2'].buy('000001', 10, 100)  # 临时切换到账号2买入
+        >>> am['账号1'].balance                  # 原子地切换并查询
+        >>> am['账号2'].buy('000001', 10, 100)  # 原子地切换并买入
     """
 
     def __init__(self, trader):
@@ -60,23 +93,14 @@ class AccountManager:
     def current(self) -> Optional[str]:
         if self._is_single:
             return None
-        main = self._trader._main
-        if main is None:
-            return None
-        try:
-            combo = main.child_window(
-                control_id=self._trader._config.ACCOUNT_SWITCHER_COMBOBOX_ID,
-                class_name="ComboBox"
-            )
-            items = [it.strip() for it in combo.texts() if it and it.strip()]
-            if not items:
+        with self._client_operation("current_account"):
+            label = self._current_label_locked()
+            if label is None:
                 return None
             for acc in self._accounts:
-                if acc["label"] == items[0]:
+                if acc["label"] == label:
                     return acc["name"]
-            return items[0]
-        except Exception:
-            return None
+            return label
 
     def list(self) -> List[Dict]:
         if self._is_single:
@@ -93,31 +117,44 @@ class AccountManager:
     # ── 自动扫描 ──────────────────────────────────────────────
 
     def scan(self) -> List[Dict]:
-        main = self._trader._main
-        if main is None:
-            raise RuntimeError("请先调用 connect() 连接同花顺客户端后再扫描")
+        with self._client_operation("scan_accounts"):
+            main = self._trader._main
+            if main is None:
+                raise RuntimeError("请先调用 connect() 连接同花顺客户端后再扫描")
 
-        raw = self._scan_account_manager_combobox(main)
-        if not raw:
-            return []
+            raw = self._scan_account_manager_combobox(main)
+            if not raw:
+                return []
 
-        self._accounts = [
-            {
-                "name": label.split("-")[0].strip() if "-" in label else label,
-                "hotkey": i + 1,
-                "label": label,
-            }
-            for i, label in enumerate(raw)
-        ]
-        if self._active_index is None and self._accounts:
-            self._active_index = 0
-        logger.info("扫描到 %d 个账号: %s", len(self._accounts),
-                     [a["name"] for a in self._accounts])
-        return self._accounts
+            self._accounts = [
+                {
+                    "name": label.split("-")[0].strip() if "-" in label else label,
+                    "hotkey": i + 1,
+                    "label": label,
+                }
+                for i, label in enumerate(raw)
+            ]
+            current_label = self._current_label_locked()
+            self._active_index = next(
+                (
+                    i
+                    for i, account in enumerate(self._accounts)
+                    if account["label"] == current_label
+                ),
+                None,
+            )
+            logger.info("扫描到 %d 个账号: %s", len(self._accounts),
+                         [a["name"] for a in self._accounts])
+            return self._accounts
 
     @staticmethod
     def _find_account_combobox_items(combo) -> Optional[List[str]]:
-        raw_items = combo.texts()
+        try:
+            raw_items = combo.item_texts()
+        except Exception:
+            raw_items = combo.texts()
+        if not raw_items:
+            raw_items = combo.texts()
         items = [it.strip() for it in raw_items if it and it.strip()]
         skip_keywords = ["编辑账户", "编辑账号", "添加", "管理"]
         real_accounts = []
@@ -160,8 +197,13 @@ class AccountManager:
     # ── 账号切换 ──────────────────────────────────────────────
 
     def switch(self, name_or_index: Union[str, int]) -> "AccountManager":
+        with self._client_operation("switch_account"):
+            self._switch_locked(name_or_index)
+        return self
+
+    def _switch_locked(self, name_or_index: Union[str, int]):
         if self._is_single:
-            return self
+            return
         idx = self._resolve(name_or_index)
         if idx is None:
             available = ", ".join(
@@ -170,14 +212,22 @@ class AccountManager:
             raise KeyError(
                 f"未找到账号: '{name_or_index}'，可用账号: [{available}]"
             )
-        if idx == self._active_index:
-            return self
         acc = self._accounts[idx]
+        if self._current_label_locked() == acc["label"]:
+            self._active_index = idx
+            return
+
         logger.info("切换到账号: %s", acc["name"])
         if not acc.get("_synthetic"):
             self._send_hotkey(acc["hotkey"])
-        self._active_index = idx
-        return self
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if self._current_label_locked() == acc["label"]:
+                self._active_index = idx
+                return
+            time.sleep(0.05)
+        raise RuntimeError("切换账号失败，当前客户端账号与目标账号不一致")
 
     def _send_hotkey(self, hotkey: int):
         main = self._trader._main
@@ -189,7 +239,28 @@ class AccountManager:
             pass
         time.sleep(0.2)
         main.type_keys("%{}".format(hotkey))
-        time.sleep(0.5)
+
+    def _current_label_locked(self) -> Optional[str]:
+        main = self._trader._main
+        if main is None:
+            return None
+        try:
+            combo = main.child_window(
+                control_id=self._trader._config.ACCOUNT_SWITCHER_COMBOBOX_ID,
+                class_name="ComboBox"
+            )
+            try:
+                selected = combo.selected_text()
+            except Exception:
+                selected = None
+            if not isinstance(selected, str) or not selected.strip():
+                texts = combo.texts()
+                selected = texts[0] if texts else None
+            if isinstance(selected, str) and selected.strip():
+                return selected.strip()
+        except Exception:
+            pass
+        return None
 
     def _resolve(self, name_or_index: Union[str, int]) -> Optional[int]:
         if isinstance(name_or_index, int):
@@ -205,13 +276,35 @@ class AccountManager:
                     return i
         return None
 
-    def __getitem__(self, name_or_index: Union[str, int]) -> "AccountManager":
-        self.switch(name_or_index)
-        return self
+    def __getitem__(self, name_or_index: Union[str, int]) -> _AccountProxy:
+        if self._resolve(name_or_index) is None:
+            available = ", ".join(
+                [f"'{a['name']}'" for a in self._accounts]
+            )
+            raise KeyError(
+                f"未找到账号: '{name_or_index}'，可用账号: [{available}]"
+            )
+        return _AccountProxy(self, name_or_index)
 
     # ── 操作代理 ──────────────────────────────────────────────
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
+        if not self._is_single:
+            raise RuntimeError(
+                "多账号模式必须显式指定账号，例如 am['账号'].{}".format(name)
+            )
         return getattr(self._trader, name)
+
+    @contextlib.contextmanager
+    def _client_operation(self, operation_name, preserve_state_on_error=False):
+        client_lock = getattr(self._trader, "_client_lock", None)
+        if client_lock is None:
+            yield
+            return
+        with client_lock.operation(
+            operation_name,
+            preserve_state_on_error=preserve_state_on_error,
+        ):
+            yield

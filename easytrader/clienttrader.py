@@ -14,10 +14,10 @@ import easyutils
 from pywinauto import findwindows, timings
 
 from easytrader import grid_strategies, pop_dialog_handler, refresh_strategies
+from easytrader.client_lock import ClientOperationLock, locked_client_operation
 from easytrader.config import client
 from easytrader.grid_strategies import IGridStrategy
 from easytrader.log import logger
-from easytrader.refresh_strategies import IRefreshStrategy
 from easytrader.utils.misc import file2dict
 from easytrader.utils.perf import perf_clock
 
@@ -65,7 +65,6 @@ class ClientTrader(IClientTrader):
     # The strategy to use for getting grid data
     grid_strategy: Union[IGridStrategy, Type[IGridStrategy]] = grid_strategies.Copy
     _grid_strategy_instance: IGridStrategy = None
-    refresh_strategy: IRefreshStrategy = refresh_strategies.Switch()
 
     def enable_type_keys_for_editor(self):
         """
@@ -89,6 +88,9 @@ class ClientTrader(IClientTrader):
         self._app = None
         self._main = None
         self._toolbar = None
+        self._grid_strategy_instance = None
+        self.refresh_strategy = refresh_strategies.Switch()
+        self._client_lock = ClientOperationLock()
 
     @property
     def app(self):
@@ -114,16 +116,32 @@ class ClientTrader(IClientTrader):
                 "参数 exe_path 未设置，请设置客户端对应的 exe 地址,类似 C:\\客户端安装目录\\xiadan.exe"
             )
 
-        self._app = pywinauto.Application().connect(path=connect_path, timeout=10)
-        self._close_prompt_windows()
-        self._main = self._app.top_window()
-        self._init_toolbar()
+        self._client_lock.configure(self._operation_lock_path(connect_path))
+        with self._client_lock.operation("connect"):
+            self._app = pywinauto.Application().connect(path=connect_path, timeout=10)
+            self._close_prompt_windows()
+            self._main = self._app.top_window()
+            self._init_toolbar()
+
+    def clear_client_recovery_state(self, exe_path=None):
+        """
+        清除异常退出留下的恢复标记。
+
+        调用前必须先人工核对当日委托并确认客户端界面状态。
+        """
+        recovery_path = exe_path or self._config.DEFAULT_EXE_PATH
+        if not self._client_lock.configured:
+            if recovery_path is None:
+                raise ValueError("参数 exe_path 未设置")
+            self._client_lock.configure(self._operation_lock_path(recovery_path))
+        self._client_lock.clear_recovery_state()
 
     @property
     def broker_type(self):
         return "ths"
 
     @property
+    @locked_client_operation
     def balance(self):
         self._switch_left_menus(["查询[F4]", "资金股票"])
 
@@ -143,23 +161,27 @@ class ClientTrader(IClientTrader):
         return result
 
     @property
+    @locked_client_operation
     def position(self):
         self._switch_left_menus(["查询[F4]", "资金股票"])
         self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @property
+    @locked_client_operation
     def today_entrusts(self):
         self._switch_left_menus(["查询[F4]", "当日委托"])
         self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @property
+    @locked_client_operation
     def today_trades(self):
         self._switch_left_menus(["查询[F4]", "当日成交"])
         self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
+    @locked_client_operation
     def history_entrusts(self, start_date=None, end_date=None):
         """
         查询历史委托记录（默认返回客户端显示的委托数据）
@@ -169,6 +191,7 @@ class ClientTrader(IClientTrader):
         """
         return self._query_history(self._config.HISTORY_ENTRUSTS_MENU_PATH)
 
+    @locked_client_operation
     def history_trades(self, start_date=None, end_date=None):
         """
         查询历史成交记录（默认返回客户端显示的成交数据）
@@ -178,6 +201,7 @@ class ClientTrader(IClientTrader):
         """
         return self._query_history(self._config.HISTORY_TRADES_MENU_PATH)
 
+    @locked_client_operation
     def exchangebill(self, start_date=None, end_date=None):
         """
         查询交割单（默认返回客户端显示的最近30天交割单）
@@ -188,6 +212,7 @@ class ClientTrader(IClientTrader):
         return self._query_history(self._config.EXCHANGEBILL_MENU_PATH)
 
     @property
+    @locked_client_operation
     def cancel_entrusts(self):
         self.refresh()
         self._switch_left_menus(["撤单[F3]"])
@@ -195,6 +220,7 @@ class ClientTrader(IClientTrader):
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
     @perf_clock
+    @locked_client_operation
     def cancel_entrust(self, entrust_no):
         self.refresh()
         for i, entrust in enumerate(self.cancel_entrusts):
@@ -203,6 +229,7 @@ class ClientTrader(IClientTrader):
                 return self._handle_pop_dialogs()
         return {"message": "委托单状态错误不能撤单, 该委托单可能已经成交或者已撤"}
 
+    @locked_client_operation
     def cancel_all_entrusts(self):
         self.refresh()
         self._switch_left_menus(["撤单[F3]"])
@@ -229,30 +256,35 @@ class ClientTrader(IClientTrader):
         self.close_pop_dialog()
 
     @perf_clock
+    @locked_client_operation
     def repo(self, security, price, amount, **kwargs):
         self._switch_left_menus(["债券回购", "融资回购（正回购）"])
 
         return self.trade(security, price, amount)
 
     @perf_clock
+    @locked_client_operation
     def reverse_repo(self, security, price, amount, **kwargs):
         self._switch_left_menus(["债券回购", "融劵回购（逆回购）"])
 
         return self.trade(security, price, amount)
 
     @perf_clock
+    @locked_client_operation
     def buy(self, security, price, amount, **kwargs):
         self._switch_left_menus(["买入[F1]"])
 
         return self.trade(security, price, amount)
 
     @perf_clock
+    @locked_client_operation
     def sell(self, security, price, amount, **kwargs):
         self._switch_left_menus(["卖出[F2]"])
 
         return self.trade(security, price, amount)
 
     @perf_clock
+    @locked_client_operation
     def market_buy(self, security, amount, ttype=None, limit_price=None, **kwargs):
         """
         市价买入
@@ -270,6 +302,7 @@ class ClientTrader(IClientTrader):
         return self.market_trade(security, amount, ttype, limit_price=limit_price)
 
     @perf_clock
+    @locked_client_operation
     def market_sell(self, security, amount, ttype=None, limit_price=None, **kwargs):
         """
         市价卖出
@@ -285,6 +318,7 @@ class ClientTrader(IClientTrader):
 
         return self.market_trade(security, amount, ttype, limit_price=limit_price)
 
+    @locked_client_operation
     def market_trade(self, security, amount, ttype=None, limit_price=None, **kwargs):
         """
         市价交易
@@ -333,6 +367,7 @@ class ClientTrader(IClientTrader):
         raise TypeError("不支持对应的市价类型: {}".format(ttype))
 
 
+    @locked_client_operation
     def auto_ipo(self):
         self._switch_left_menus(self._config.AUTO_IPO_MENU_PATH)
 
@@ -371,6 +406,7 @@ class ClientTrader(IClientTrader):
         ).click(coords=(x, y))
 
     @perf_clock
+    @locked_client_operation
     def is_exist_pop_dialog(self):
         self.wait(0.5)  # wait dialog display
         try:
@@ -386,6 +422,7 @@ class ClientTrader(IClientTrader):
             return False
 
     @perf_clock
+    @locked_client_operation
     def close_pop_dialog(self):
         try:
             if self._main.wrapper_object() != self._app.top_window().wrapper_object():
@@ -403,9 +440,13 @@ class ClientTrader(IClientTrader):
     def _run_exe_path(self, exe_path):
         return os.path.join(os.path.dirname(exe_path), "xiadan.exe")
 
+    def _operation_lock_path(self, exe_path):
+        return self._run_exe_path(exe_path)
+
     def wait(self, seconds):
         time.sleep(seconds)
 
+    @locked_client_operation
     def exit(self):
         self._app.kill()
 
@@ -419,11 +460,13 @@ class ClientTrader(IClientTrader):
                 self.wait(0.2)
         self.wait(1)
 
+    @locked_client_operation
     def close_pormpt_window_no_wait(self):
         for window in self._app.windows(class_name="#32770"):
             if window.window_text() != self._config.TITLE:
                 window.close()
 
+    @locked_client_operation
     def trade(self, security, price, amount):
         self._set_trade_params(security, price, amount)
 
@@ -572,6 +615,7 @@ class ClientTrader(IClientTrader):
             class_name="CVirtualGridCtrl",
         ).double_click(coords=(x, y))
 
+    @locked_client_operation
     def refresh(self):
         self.refresh_strategy.set_trader(self)
         self.refresh_strategy.refresh()
@@ -629,11 +673,17 @@ class BaseLoginClientTrader(ClientTrader):
             password = account["password"]
             comm_password = account.get("comm_password")
             exe_path = account.get("exe_path")
-        self.login(
-            user,
-            password,
-            exe_path or self._config.DEFAULT_EXE_PATH,
-            comm_password,
-            **kwargs
-        )
-        self._init_toolbar()
+        login_path = exe_path or self._config.DEFAULT_EXE_PATH
+        if login_path is None:
+            raise ValueError("参数 exe_path 未设置")
+
+        self._client_lock.configure(self._operation_lock_path(login_path))
+        with self._client_lock.operation("prepare"):
+            self.login(
+                user,
+                password,
+                login_path,
+                comm_password,
+                **kwargs
+            )
+            self._init_toolbar()

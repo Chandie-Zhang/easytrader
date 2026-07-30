@@ -107,10 +107,12 @@ class YHClientTrader(clienttrader.BaseLoginClientTrader):
         return "".join(re.findall(r"\d+", verify_code))
 
     @property
+    @clienttrader.locked_client_operation
     def balance(self):
         self._switch_left_menus(self._config.BALANCE_MENU_PATH)
         return self._get_grid_data(self._config.BALANCE_GRID_CONTROL_ID)
 
+    @clienttrader.locked_client_operation
     def auto_ipo(self):
         self._switch_left_menus(self._config.AUTO_IPO_MENU_PATH)
         stock_list = self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
