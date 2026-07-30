@@ -123,19 +123,6 @@ class ClientTrader(IClientTrader):
             self._main = self._app.top_window()
             self._init_toolbar()
 
-    def clear_client_recovery_state(self, exe_path=None):
-        """
-        清除异常退出留下的恢复标记。
-
-        调用前必须先人工核对当日委托并确认客户端界面状态。
-        """
-        recovery_path = exe_path or self._config.DEFAULT_EXE_PATH
-        if not self._client_lock.configured:
-            if recovery_path is None:
-                raise ValueError("参数 exe_path 未设置")
-            self._client_lock.configure(self._operation_lock_path(recovery_path))
-        self._client_lock.clear_recovery_state()
-
     @property
     def broker_type(self):
         return "ths"

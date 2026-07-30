@@ -353,17 +353,8 @@ am.buy('162411', 0.55, 100)
 
 等待客户端锁超过 30 秒会抛出 `ClientBusyError`，不会继续执行已经过期的操作。
 
-如果上一个进程在操作客户端时异常退出，或者交易/撤单操作抛出异常、被中断，
-后续调用会抛出 `ClientStateUnknownError`。请先人工核对当日委托和客户端界面，
-确认不会重复下单后再清除恢复标记：
-
-```python
-trader.clear_client_recovery_state(
-    exe_path='C:\\同花顺软件\\同花顺\\xiadan.exe'
-)
-```
-
-该方法只清除 easytrader 的恢复标记，不会撤单、补单或修改客户端内容。
+如果持锁进程异常退出，Windows 会自动释放命名 Mutex；下一个等待者会接管锁并
+继续执行，不需要人工清锁。
 
 ### 重命名
 
