@@ -83,8 +83,38 @@ class RemoteClient:
     def exit(self):
         return self.common_get("exit")
 
+    def history_entrusts(self, start_date=None, end_date=None):
+        params = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self._common_get_with_params("history_entrusts", params)
+
+    def history_trades(self, start_date=None, end_date=None):
+        params = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self._common_get_with_params("history_trades", params)
+
+    def exchangebill(self, start_date=None, end_date=None):
+        params = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self._common_get_with_params("exchangebill", params)
+
     def common_get(self, endpoint):
         response = self._s.get(self._api + "/" + endpoint)
+        if response.status_code >= 300:
+            raise Exception(response.json()["error"])
+        return response.json()
+
+    def _common_get_with_params(self, endpoint, params):
+        response = self._s.get(self._api + "/" + endpoint, params=params)
         if response.status_code >= 300:
             raise Exception(response.json()["error"])
         return response.json()

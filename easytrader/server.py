@@ -131,5 +131,41 @@ def get_exit():
     return jsonify({"msg": "exit success"}), 200
 
 
+@app.route("/history_entrusts", methods=["GET"])
+@error_handle
+def get_history_entrusts():
+    user = global_store["user"]
+    args = request.args
+    data = user.history_entrusts(
+        start_date=args.get("start_date"),
+        end_date=args.get("end_date"),
+    )
+    return jsonify(data), 200
+
+
+@app.route("/history_trades", methods=["GET"])
+@error_handle
+def get_history_trades():
+    user = global_store["user"]
+    args = request.args
+    data = user.history_trades(
+        start_date=args.get("start_date"),
+        end_date=args.get("end_date"),
+    )
+    return jsonify(data), 200
+
+
+@app.route("/exchangebill", methods=["GET"])
+@error_handle
+def get_exchangebill():
+    user = global_store["user"]
+    args = request.args
+    data = user.exchangebill(
+        start_date=args.get("start_date"),
+        end_date=args.get("end_date"),
+    )
+    return jsonify(data), 200
+
+
 def run(port=1430):
     app.run(host="0.0.0.0", port=port)

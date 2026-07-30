@@ -48,6 +48,11 @@ class CommonConfig:
     TODAY_ENTRUSTS_MENU_PATH = ["查询[F4]", "当日委托"]
     TODAY_TRADES_MENU_PATH = ["查询[F4]", "当日成交"]
 
+    # 历史委托 / 历史成交 / 交割单（部分客户端需要日期输入）
+    HISTORY_ENTRUSTS_MENU_PATH = ["查询[F4]", "历史委托"]
+    HISTORY_TRADES_MENU_PATH = ["查询[F4]", "历史成交"]
+    EXCHANGEBILL_MENU_PATH = ["查询[F4]", "交割单"]
+
     BALANCE_CONTROL_ID_GROUP = {
         "资金余额": 1012,
         "可用金额": 1016,

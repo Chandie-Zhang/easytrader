@@ -160,6 +160,33 @@ class ClientTrader(IClientTrader):
         self.refresh()
         return self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
 
+    def history_entrusts(self, start_date=None, end_date=None):
+        """
+        查询历史委托记录（默认返回客户端显示的委托数据）
+        :param start_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :param end_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :return: list of dict
+        """
+        return self._query_history(self._config.HISTORY_ENTRUSTS_MENU_PATH)
+
+    def history_trades(self, start_date=None, end_date=None):
+        """
+        查询历史成交记录（默认返回客户端显示的成交数据）
+        :param start_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :param end_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :return: list of dict
+        """
+        return self._query_history(self._config.HISTORY_TRADES_MENU_PATH)
+
+    def exchangebill(self, start_date=None, end_date=None):
+        """
+        查询交割单（默认返回客户端显示的最近30天交割单）
+        :param start_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :param end_date: 保留参数，当前版本客户端不支持自定义日期筛选
+        :return: list of dict
+        """
+        return self._query_history(self._config.EXCHANGEBILL_MENU_PATH)
+
     @property
     def cancel_entrusts(self):
         self.refresh()
@@ -468,6 +495,22 @@ class ClientTrader(IClientTrader):
 
     def _get_grid_data(self, control_id):
         return self.grid_strategy_instance.get(control_id)
+
+    def _query_history(self, menu_path):
+        """
+        切换菜单后直接读取 Grid 数据（客户端默认加载数据）
+        :param menu_path: 菜单路径列表
+        :return: list of dict，已去除空列
+        """
+        self._switch_left_menus(menu_path)
+        data = self._get_grid_data(self._config.COMMON_GRID_CONTROL_ID)
+        # 过滤掉 Unnamed 空列
+        if data and isinstance(data, list):
+            for row in data:
+                for key in list(row.keys()):
+                    if key.startswith("Unnamed"):
+                        del row[key]
+        return data
 
 
     def _type_edit_control_keys(self, control_id, text):
