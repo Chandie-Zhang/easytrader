@@ -14,3 +14,11 @@ class NotLoginError(Exception):
 class QuotaExceededError(Exception):
     """API 调用配额耗尽"""
     pass
+
+
+class ClientBusyError(RuntimeError):
+    """同一个 GUI 客户端正在被其他线程或进程操作"""
+
+
+class ClientStateUnknownError(RuntimeError):
+    """上一个客户端操作异常中断，操作结果需要人工确认"""
