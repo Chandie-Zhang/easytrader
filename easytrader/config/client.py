@@ -63,6 +63,12 @@ class CommonConfig:
 
     POP_DIALOD_TITLE_CONTROL_ID = 1365
 
+    # 跨市场品种（如 160140 沪深同名产品）输入代码后弹出的市场选择对话框控件
+    MARKET_SELECT_DIALOG_TITLE = "请选择证券市场"
+    MARKET_SELECT_SH_BUTTON_CONTROL_ID = 1997
+    MARKET_SELECT_SZ_BUTTON_CONTROL_ID = 1967
+    MARKET_SELECT_REMEMBER_CONTROL_ID = 1504
+
     GRID_DTYPE = {
         "操作日期": str,
         "委托编号": str,

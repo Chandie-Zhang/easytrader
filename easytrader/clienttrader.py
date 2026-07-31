@@ -24,6 +24,11 @@ from easytrader.utils.perf import perf_clock
 if not sys.platform.startswith("darwin"):
     import pywinauto
     import pywinauto.clipboard
+    from easytrader.utils.win_gui import (
+        SetForegroundWindow,
+        ShowWindow,
+        win32defines,
+    )
 
 
 class IClientTrader(abc.ABC):
@@ -319,6 +324,7 @@ class ClientTrader(IClientTrader):
         """
         code = security[-6:]
         self._type_edit_control_keys(self._config.TRADE_SECURITY_CONTROL_ID, code)
+        self._handle_market_select_dialog(security)
         if ttype is not None:
             retry = 0
             retry_max = 10
@@ -333,7 +339,8 @@ class ClientTrader(IClientTrader):
         self._submit_trade()
 
         return self._handle_pop_dialogs(
-            handler_class=pop_dialog_handler.TradePopDialogHandler
+            handler_class=pop_dialog_handler.TradePopDialogHandler,
+            security=security,
         )
 
     def _set_market_trade_type(self, ttype):
@@ -397,9 +404,7 @@ class ClientTrader(IClientTrader):
     def is_exist_pop_dialog(self):
         self.wait(0.5)  # wait dialog display
         try:
-            return (
-                self._main.wrapper_object() != self._app.top_window().wrapper_object()
-            )
+            return self._get_pop_dialog() is not None
         except (
             findwindows.ElementNotFoundError,
             timings.TimeoutError,
@@ -412,11 +417,10 @@ class ClientTrader(IClientTrader):
     @locked_client_operation
     def close_pop_dialog(self):
         try:
-            if self._main.wrapper_object() != self._app.top_window().wrapper_object():
-                w = self._app.top_window()
-                if w is not None:
-                    w.close()
-                    self.wait(0.2)
+            dialog = self._get_pop_dialog()
+            if dialog is not None:
+                dialog.close()
+                self.wait(0.2)
         except (
             findwindows.ElementNotFoundError,
             timings.TimeoutError,
@@ -460,7 +464,8 @@ class ClientTrader(IClientTrader):
         self._submit_trade()
 
         return self._handle_pop_dialogs(
-            handler_class=pop_dialog_handler.TradePopDialogHandler
+            handler_class=pop_dialog_handler.TradePopDialogHandler,
+            security=security,
         )
 
     def _click(self, control_id):
@@ -482,22 +487,36 @@ class ClientTrader(IClientTrader):
         )
 
     @perf_clock
-    def _get_pop_dialog_title(self):
-        return (
-            self._app.top_window()
-            .child_window(control_id=self._config.POP_DIALOD_TITLE_CONTROL_ID)
-            .window_text()
+    def _get_pop_dialog(self):
+        """返回客户端当前最靠前的可见标准弹窗（#32770 对话框），主窗口自身除外"""
+        main_handle = self._main.wrapper_object().handle
+        for window in self._app.windows(class_name="#32770", visible_only=True):
+            if window.handle != main_handle:
+                return window
+        return None
+
+    def _get_pop_dialog_title(self, dialog=None):
+        dialog = dialog or self._get_pop_dialog()
+        if dialog is None:
+            raise findwindows.ElementNotFoundError("没有可见弹窗")
+        title = next(
+            (
+                control.window_text()
+                for control in dialog.children()
+                if control.control_id() == self._config.POP_DIALOD_TITLE_CONTROL_ID
+            ),
+            None,
         )
+        if title is None:
+            raise findwindows.ElementNotFoundError("弹窗标题控件不存在")
+        return title
 
     def _set_trade_params(self, security, price, amount):
         self.wait(0.3)
         code = security[-6:]
 
         self._type_edit_control_keys(self._config.TRADE_SECURITY_CONTROL_ID, code)
-
-        # wait security input finish
-        self.wait(0.1)
-
+        self._handle_market_select_dialog(security)
 
         self._type_edit_control_keys(
             self._config.TRADE_PRICE_CONTROL_ID,
@@ -550,28 +569,72 @@ class ClientTrader(IClientTrader):
             ).set_edit_text(text)
         else:
             editor = self._main.child_window(control_id=control_id, class_name="Edit")
+            self._focus_editor_without_moving_cursor(editor)
             editor.select()
-            editor.type_keys(text)
+            editor.type_keys("^a{BACKSPACE}", set_foreground=False)
+            editor.type_keys(str(text), set_foreground=False, pause=0.05)
 
     def type_edit_control_keys(self, editor, text):
         if not self._editor_need_type_keys:
             editor.set_edit_text(text)
         else:
+            self._focus_editor_without_moving_cursor(editor)
             editor.select()
-            editor.type_keys(text)
+            editor.type_keys("^a{BACKSPACE}", set_foreground=False)
+            editor.type_keys(str(text), set_foreground=False, pause=0.05)
 
+    @staticmethod
+    def _focus_editor_without_moving_cursor(editor):
+        editor.set_keyboard_focus()
+
+    def _handle_market_select_dialog(self, security):
+        """输入证券代码后立即处理可能延迟出现的“请选择证券市场”弹窗"""
+        handler = pop_dialog_handler.TradePopDialogHandler(
+            self._app, security=security
+        )
+        code = str(security)[-6:]
+        # 已观察到的跨市场冲突场景是深圳 1xxxxx 证券与上海债券代码撞号；
+        # 客户端繁忙时该弹窗可能在输入代码一秒后才出现，需要多轮轮询等待。
+        attempts = 21 if code.startswith("1") else 7
+        for attempt in range(attempts):
+            dialog = self._get_pop_dialog()
+            if dialog is not None:
+                title = self._get_pop_dialog_title(dialog)
+                if title == self._config.MARKET_SELECT_DIALOG_TITLE:
+                    handler.handle(title, dialog=dialog)
+                    self.wait(0.2)
+                    return True
+                return False
+            if attempt < attempts - 1:
+                self.wait(0.1)
+        return False
 
     @perf_clock
     def _switch_left_menus(self, path, sleep=0.2):
         self.close_pop_dialog()
         self._get_left_menus_handle().get_item(path).select()
-        self._app.top_window().type_keys("{F5}")
+        self._set_foreground()
+        self._main.type_keys("{F5}", set_foreground=False)
         self.wait(sleep)
 
     def _switch_left_menus_by_shortcut(self, shortcut, sleep=0.5):
         self.close_pop_dialog()
-        self._app.top_window().type_keys(shortcut)
+        self._set_foreground()
+        self._main.type_keys(shortcut)
         self.wait(sleep)
+
+    def _set_foreground(self, window=None):
+        """确保主窗口可见且在前台，type_keys 的 verify_actionable 要求窗口可见"""
+        window = window or self._main
+        if window is None:
+            return
+        try:
+            if window.has_style(win32defines.WS_MINIMIZE):  # 最小化时先还原
+                ShowWindow(window.wrapper_object(), 9)  # SW_RESTORE 还原窗口
+            else:
+                SetForegroundWindow(window.wrapper_object())  # 置前
+        except Exception:
+            pass
 
     @functools.lru_cache()
     def _get_left_menus_handle(self):
@@ -608,21 +671,29 @@ class ClientTrader(IClientTrader):
         self.refresh_strategy.refresh()
 
     @perf_clock
-    def _handle_pop_dialogs(self, handler_class=pop_dialog_handler.PopDialogHandler):
-        handler = handler_class(self._app)
+    def _handle_pop_dialogs(
+        self, handler_class=pop_dialog_handler.PopDialogHandler, security=None
+    ):
+        if issubclass(handler_class, pop_dialog_handler.TradePopDialogHandler):
+            handler = handler_class(self._app, security=security)
+        else:
+            handler = handler_class(self._app)
         loop_count = 0
 
         while self.is_exist_pop_dialog():
             loop_count += 1
             logger.info("第 %s 次循环, 检测到弹窗", loop_count)
+            dialog = self._get_pop_dialog()
+            if dialog is None:
+                break
             try:
-                title = self._get_pop_dialog_title()
+                title = self._get_pop_dialog_title(dialog)
                 logger.info("弹窗标题: '%s'", title)
             except pywinauto.findwindows.ElementNotFoundError as e:
                 logger.warning("弹窗存在但无法获取标题, 异常: %s", e)
                 return {"message": "success"}
 
-            result = handler.handle(title)
+            result = handler.handle(title, dialog=dialog)
             logger.info("handle('%s') 返回: %s", title, result)
             if result:
                 return result
