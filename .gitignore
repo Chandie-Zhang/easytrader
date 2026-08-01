@@ -14,6 +14,9 @@ ht_account.json
 .ipynb_checkpoints
 Untitled.ipynb
 untitled.txt
+# 本地个人配置（含真实凭据，勿提交；模板见 baidu_ocr.example.json）
+baidu_ocr.json
+reasonix.toml
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

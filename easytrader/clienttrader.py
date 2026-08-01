@@ -13,7 +13,7 @@ import hashlib, binascii
 import easyutils
 from pywinauto import findwindows, timings
 
-from easytrader import grid_strategies, pop_dialog_handler, refresh_strategies
+from easytrader import exceptions, grid_strategies, pop_dialog_handler, refresh_strategies
 from easytrader.client_lock import ClientOperationLock, locked_client_operation
 from easytrader.config import client
 from easytrader.grid_strategies import IGridStrategy
@@ -24,6 +24,7 @@ from easytrader.utils.perf import perf_clock
 if not sys.platform.startswith("darwin"):
     import pywinauto
     import pywinauto.clipboard
+    import pywintypes
     from easytrader.utils.win_gui import (
         SetForegroundWindow,
         ShowWindow,
@@ -583,9 +584,30 @@ class ClientTrader(IClientTrader):
             editor.type_keys("^a{BACKSPACE}", set_foreground=False)
             editor.type_keys(str(text), set_foreground=False, pause=0.05)
 
-    @staticmethod
-    def _focus_editor_without_moving_cursor(editor):
-        editor.set_keyboard_focus()
+    def _focus_editor_without_moving_cursor(self, editor):
+        """将键盘焦点设置到编辑框。
+
+        客户端在页面切换（如从市价委托页切回卖出页）或非交易时段可能短暂禁用
+        输入控件，此时 set_keyboard_focus 会抛 pywintypes.error(87)，这里轮询
+        等待控件可用，超时后抛明确的 TradeError 而非裸 Windows 错误。
+        """
+        retry_max = 10
+        for attempt in range(retry_max):
+            try:
+                if not editor.is_enabled():
+                    raise pywintypes.error(0, "is_enabled", "控件未启用")
+                editor.set_keyboard_focus()
+                return
+            except (
+                pywintypes.error,
+                findwindows.ElementNotFoundError,
+                timings.TimeoutError,
+            ):
+                if attempt < retry_max - 1:
+                    self.wait(0.1)
+        raise exceptions.TradeError(
+            "交易输入框不可用（可能处于市价委托页或非交易时段），无法设置键盘焦点"
+        )
 
     def _handle_market_select_dialog(self, security):
         """输入证券代码后立即处理可能延迟出现的“请选择证券市场”弹窗"""

@@ -125,6 +125,31 @@ class TestClientTraderDialogFlow(unittest.TestCase):
             ],
         )
 
+    def test_focus_retries_when_editor_disabled_then_succeeds(self):
+        # 客户端页面切换（如市价委托页切回卖出页）时控件短暂 disabled，
+        # _focus_editor_without_moving_cursor 应轮询重试而非直接崩溃
+        editor = MagicMock()
+        editor.is_enabled.side_effect = [False, False, True]
+        self.trader.wait = MagicMock()
+
+        self.trader._focus_editor_without_moving_cursor(editor)
+
+        editor.set_keyboard_focus.assert_called_once_with()
+        self.assertEqual(self.trader.wait.call_count, 2)
+
+    def test_focus_raises_trade_error_when_editor_never_enabled(self):
+        # 控件始终 disabled（如非交易时段/市价委托页）时，超时后抛明确
+        # TradeError，而不是 pywintypes.error(87) 裸崩溃
+        editor = MagicMock()
+        editor.is_enabled.return_value = False
+        self.trader.wait = MagicMock()
+
+        with self.assertRaises(exceptions.TradeError):
+            self.trader._focus_editor_without_moving_cursor(editor)
+
+        editor.set_keyboard_focus.assert_not_called()
+        self.assertEqual(self.trader.wait.call_count, 9)
+
     def test_extract_content_returns_empty_when_dialog_has_no_static(self):
         # 非交易日"提交失败：Begin failed!"提示弹窗没有 Static 子控件，
         # 旧的 dialog.Static 属性访问会抛 AttributeError，现在应安全返回空串
