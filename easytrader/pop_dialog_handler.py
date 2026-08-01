@@ -44,7 +44,15 @@ class PopDialogHandler:
         return {"message": "unknown message: {}".format(content)}
 
     def _extract_content(self):
-        return self._get_dialog().Static.window_text()
+        dialog = self._get_dialog()
+        # 部分弹窗（如非交易日"提交失败：Begin failed!"提示）没有 Static 类子控件，
+        # pywinauto 属性访问会抛 AttributeError，这里逐类回退，提取不到返回空串
+        for attr in ("Static", "Edit", "RichEdit"):
+            try:
+                return getattr(dialog, attr).window_text()
+            except AttributeError:
+                continue
+        return ""
 
     @staticmethod
     def _extract_entrust_id(content):
@@ -145,6 +153,10 @@ class TradePopDialogHandler(PopDialogHandler):
 
             self._submit_by_click()
             time.sleep(0.05)
+            if not content:
+                # 无法提取到文本内容的提示弹窗（如非交易日"提交失败：Begin failed!"），
+                # 已点击确定自动关闭，避免 AttributeError/TradeError 中断程序
+                return None
             raise exceptions.TradeError(content)
         self._close()
         return None
