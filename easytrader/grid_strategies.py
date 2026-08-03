@@ -109,7 +109,17 @@ class Copy(BaseStrategy):
                         file_path
                     )  # 保存验证码
 
-                    captcha_num = captcha_recognize(file_path).strip()  # 识别验证码
+                    try:
+                        captcha_num = captcha_recognize(file_path).strip()  # 识别验证码
+                    except Exception as e:
+                        # 验证码识别是可选增强能力：未配置 OCR / 网络异常 / 配额耗尽时
+                        # 输出 warning 并跳过自动识别，避免拖垮持仓查询等核心功能
+                        logger.warning(
+                            "验证码自动识别不可用，跳过自动输入验证码（%s）。"
+                            "若频繁出现验证码弹窗，请配置 baidu_ocr.json 或手动处理",
+                            e,
+                        )
+                        break
                     captcha_num = "".join(captcha_num.split())
                     logger.info("captcha result-->" + captcha_num)
                     if len(captcha_num) == 4:
