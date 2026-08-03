@@ -117,8 +117,8 @@ def captcha_recognize(img_path, backend="auto"):
     """识别验证码图片
 
     :param backend:
-        - 'auto': 百度 OCR → 额度耗尽 → Tesseract
-        - 'baidu': 强制使用百度 OCR
+        - 'auto': 百度 OCR → 失败 → Tesseract 兜底
+        - 'baidu': 强制使用百度 OCR，失败时抛出
         - 'tesseract': 强制使用 Tesseract
     """
     if backend == "tesseract":
@@ -126,8 +126,13 @@ def captcha_recognize(img_path, backend="auto"):
 
     try:
         return _recognize_with_baidu(img_path)
-    except exceptions.QuotaExceededError:
-        logger.warning("百度 OCR 额度已耗尽，切换至 Tesseract")
+    except Exception as e:
+        if backend == "baidu":
+            raise
+        # auto 模式：百度 OCR 不可用（未配置 baidu_ocr.json / 网络异常 /
+        # 配额耗尽等）时统一降级到本地 Tesseract；Tesseract 不可用（未安装）
+        # 则抛出，由上层调用方决定如何处理
+        logger.warning("百度 OCR 识别失败（%s），切换至 Tesseract 兜底", e)
         return _recognize_with_tesseract(img_path)
 
 
